@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -11,11 +11,42 @@ namespace OpenTaiko;
 internal class CStage演奏ドラム画面 : CStage演奏画面共通 {
 	// コンストラクタ
 
+#region HapFB Constants
+	private CGamepadVibration gamepadVibration;
+	// Vibration timing constants
+	private const float PERFECT_WARNING_TIME = 50.0f;      // ms before perfect timing to start vibration
+	private const float VIBRATION_DURATION = 200.0f;       // ms duration for single note vibrations
+	private const float ROLL_CHECK_INTERVAL = 200.0f;      // ms between roll vibration checks
+	private const float MIN_ROLL_VIBRATION_INTERVAL = 100.0f;   // Minimum time between roll vibration changes
+	private const float MIN_NOTE_VIBRATION_INTERVAL = 10.0f;    // Minimum time between note vibration changes
+	private const float ROLL_END_CHECK = 100.0f;           // ms to check after roll end time
+	
+	// Vibration strength constants
+	private const float VIBRATION_STRENGTH_DON = 2.5f;     // Don note vibration strength
+	private const float VIBRATION_STRENGTH_KA = 2.5f;      // Ka note vibration strength
+	private const float VIBRATION_STRENGTH_BALLOON = 1.0f;  // Balloon note vibration strength
+	private const float VIBRATION_STRENGTH_ROLL = 1.0f;    // Roll vibration strength
+	private const float BIG_NOTE_MULTIPLIER = 2.0f;        // Multiplier for big note vibrations
+
+	// Vibration state variables
+	private bool[] isRollActive;                           // Track roll state per player
+	private bool[] wasRollActive;                          // Previous roll state
+	private DateTime lastVibrationTime;                    // Track last vibration change
+	private Dictionary<int, bool> hasVibrated = new Dictionary<int, bool>();
+#endregion
+
 	public CStage演奏ドラム画面() {
-		base.eStageID = CStage.EStage.Game;
-		base.ePhaseID = CStage.EPhase.Common_NORMAL;
-		base.IsDeActivated = true;
-		base.ChildActivities.Add(this.actPad = new CActImplPad());
+	base.eStageID = CStage.EStage.Game;
+	base.ePhaseID = CStage.EPhase.Common_NORMAL;
+	base.IsDeActivated = true;
+
+	// Initialization of HapFB Variables
+	gamepadVibration = new CGamepadVibration();
+	isRollActive = new bool[5];   // Support up to 5 players
+	wasRollActive = new bool[5];  // Previous roll states
+	lastVibrationTime = DateTime.MinValue;
+
+	base.ChildActivities.Add(this.actPad = new CActImplPad());
 		base.ChildActivities.Add(this.actCombo = new CActImplCombo());
 		base.ChildActivities.Add(this.actChipFireD = new CActImplFireworks());
 		base.ChildActivities.Add(this.Rainbow = new Rainbow());
@@ -308,9 +339,13 @@ internal class CStage演奏ドラム画面 : CStage演奏画面共通 {
 		}
 	}
 	public override void DeActivate() {
-		this.ct手つなぎ = null;
-
-		for (int i = 0; i < OpenTaiko.ConfigIni.nPlayerCount; i++) {
+	this.ct手つなぎ = null;
+	
+	gamepadVibration?.StopVibration();
+	gamepadVibration?.Dispose();
+	hasVibrated.Clear();
+	
+	for (int i = 0; i < OpenTaiko.ConfigIni.nPlayerCount; i++) {
 			if (this.soundRed[i] != null)
 				this.soundRed[i].tDispose();
 			if (this.soundBlue[i] != null)
@@ -687,46 +722,100 @@ internal class CStage演奏ドラム画面 : CStage演奏画面共通 {
 		return nFly;
 	}
 
+	private void StopRollVibration(int player) {
+	    if (gamepadVibration != null && gamepadVibration.IsConnected()) {
+	        gamepadVibration.StopVibration();
+	    }
+	}
+	
+	
 	private bool tドラムヒット処理(long nHitTime, EPad type, CChip pChip, bool b両手入力, int nPlayer) {
-		int nInput = 0;
+	    int nInput = 0;
+	    
+	    switch (type) {
+	    case EPad.LRed:
+	    case EPad.RRed:
+	    case EPad.LRed2P:
+	    case EPad.RRed2P:
+	    case EPad.LRed3P:
+	    case EPad.RRed3P:
+	    case EPad.LRed4P:
+	    case EPad.RRed4P:
+	    case EPad.LRed5P:
+	    case EPad.RRed5P:
+	        nInput = 0;
+	        if (b両手入力)
+	            nInput = 2;
+	        break;
+	    case EPad.LBlue:
+	    case EPad.RBlue:
+	    case EPad.LBlue2P:
+	    case EPad.RBlue2P:
+	    case EPad.LBlue3P:
+	    case EPad.RBlue3P:
+	    case EPad.LBlue4P:
+	    case EPad.RBlue4P:
+	    case EPad.LBlue5P:
+	    case EPad.RBlue5P:
+	        nInput = 1;
+	        if (b両手入力)
+	            nInput = 3;
+	        break;
+	    case EPad.Clap:
+	    case EPad.Clap2P:
+	    case EPad.Clap3P:
+	    case EPad.Clap4P:
+	    case EPad.Clap5P:
+	        nInput = 4;
+	        break;
+	    }
 
-		switch (type) {
-			case EPad.LRed:
-			case EPad.RRed:
-			case EPad.LRed2P:
-			case EPad.RRed2P:
-			case EPad.LRed3P:
-			case EPad.RRed3P:
-			case EPad.LRed4P:
-			case EPad.RRed4P:
-			case EPad.LRed5P:
-			case EPad.RRed5P:
-				nInput = 0;
-				if (b両手入力)
-					nInput = 2;
-				break;
-			case EPad.LBlue:
-			case EPad.RBlue:
-			case EPad.LBlue2P:
-			case EPad.RBlue2P:
-			case EPad.LBlue3P:
-			case EPad.RBlue3P:
-			case EPad.LBlue4P:
-			case EPad.RBlue4P:
-			case EPad.LBlue5P:
-			case EPad.RBlue5P:
-				nInput = 1;
-				if (b両手入力)
-					nInput = 3;
-				break;
-			case EPad.Clap:
-			case EPad.Clap2P:
-			case EPad.Clap3P:
-			case EPad.Clap4P:
-			case EPad.Clap5P:
-				nInput = 4;
-				break;
+		#region Post-Hit Feedback Implementation
+		/*
+	    if (gamepadVibration != null && gamepadVibration.IsConnected() && pChip != null && pChip.bShow) {
+	        var timeSinceLastVibration = DateTime.Now - lastVibrationTime;
+	        var gameType = OpenTaiko.ConfigIni.nGameType[OpenTaiko.GetActualPlayer(nPlayer)];
+	        
+	        // Process hit before vibration
+	        this.tチップのヒット処理(nHitTime, pChip, EInstrumentPad.Taiko, true, nInput, nPlayer);
+
+
+	        // Handle roll/balloon vibration
+	        if (NotesManager.IsGenericBalloon(pChip) || NotesManager.IsRoll(pChip)) {
+	            if (timeSinceLastVibration.TotalMilliseconds >= MIN_ROLL_VIBRATION_INTERVAL) {
+	                float rollStrength = NotesManager.IsGenericBalloon(pChip) ? VIBRATION_STRENGTH_BALLOON : VIBRATION_STRENGTH_ROLL;
+	                gamepadVibration.SetVibration(rollStrength, rollStrength);
+	                lastVibrationTime = DateTime.Now;
+	            }
+	            return true;
+	        }
+		*/
+
+		// Then handle vibration for regular notes
+		// Reactive hit vibration disabled
+		/*
+		float noteStrength = VIBRATION_STRENGTH_DON;
+		if (NotesManager.IsBigDonTaiko(pChip, gameType)) {
+			noteStrength = VIBRATION_STRENGTH_DON * BIG_NOTE_MULTIPLIER;
+			gamepadVibration.SetVibration(0, noteStrength);
 		}
+		else if (NotesManager.IsKaNote(pChip)) {
+			noteStrength = VIBRATION_STRENGTH_KA;
+			if (NotesManager.IsBigKaTaiko(pChip, gameType)) {
+				noteStrength *= BIG_NOTE_MULTIPLIER;
+			}
+			gamepadVibration.SetVibration(noteStrength, 0);
+		}
+		else gamepadVibration.SetVibration(0, noteStrength);
+
+		Task.Delay((int)VIBRATION_DURATION).ContinueWith(_ => {
+			if (!this.bCurrentlyDrumRoll[nPlayer]) {
+				gamepadVibration?.StopVibration();
+			}
+		});
+
+	}*/
+		#endregion
 
 
 		if (pChip == null) {
@@ -1336,10 +1425,66 @@ internal class CStage演奏ドラム画面 : CStage演奏画面共通 {
 			BgFilename = OpenTaiko.TJA.strBGIMAGE_PATH;
 		base.t背景テクスチャの生成(DefaultBgFilename, bgrect, BgFilename);
 	}
+
+	#region Haptic Feedback Implementation (Pre-Perfect Timing)
+	private void CheckNoteVibration(CChip chip, long currentTime, int player) {
+	    if (!gamepadVibration.IsConnected() || chip == null || !chip.bShow) {
+	        //Debug.WriteLine("Vibration skipped: " + (!gamepadVibration.IsConnected() ? "Not connected" : chip == null ? "Null chip" : "Not visible"));
+	        return;
+	    }
+	
+	    // Handle rolls/balloons
+	    if (NotesManager.IsGenericRoll(chip) && !NotesManager.IsRollEnd(chip)) {
+	        if (chip.n発声時刻ms <= currentTime && chip.nNoteEndTimems >= currentTime) {
+	            float rollVibrationStrength = NotesManager.IsGenericBalloon(chip) ? VIBRATION_STRENGTH_BALLOON : VIBRATION_STRENGTH_ROLL;
+	            gamepadVibration.SetVibration(rollVibrationStrength, rollVibrationStrength);
+	            //Debug.WriteLine($"Roll/Balloon vibration: {(NotesManager.IsGenericBalloon(chip) ? "Balloon" : "Roll")} strength={strength}");
+	            return;
+	        }
+	    }
+	
+	    // Regular note handling
+	    if (!NotesManager.IsHittableNote(chip)) return;
+	    if (hasVibrated.ContainsKey(chip.n整数値)) return;
+	
+	    float timeToHit = chip.n発声時刻ms - currentTime;
+	    if (timeToHit <= PERFECT_WARNING_TIME && timeToHit > 0) {
+	        float preHitStrength = VIBRATION_STRENGTH_DON;
+	        var gameType = OpenTaiko.ConfigIni.nGameType[OpenTaiko.GetActualPlayer(player)];
+	        
+	        if (NotesManager.IsBigDonTaiko(chip, gameType)) {
+	            preHitStrength = VIBRATION_STRENGTH_DON * BIG_NOTE_MULTIPLIER;
+				gamepadVibration.SetVibration(0, preHitStrength);
+	        }
+	        else if (NotesManager.IsKaNote(chip)) {
+	            preHitStrength = VIBRATION_STRENGTH_KA;
+	            if (NotesManager.IsBigKaTaiko(chip, gameType)) {
+	                preHitStrength *= BIG_NOTE_MULTIPLIER;
+	            }
+				gamepadVibration.SetVibration(preHitStrength, 0);
+	        } // Normal Don note
+			else gamepadVibration.SetVibration(0, preHitStrength);
+	
+	        
+	        hasVibrated[chip.n整数値] = true;
+	        //Debug.WriteLine($"Note vibration: {(NotesManager.IsKaNote(chip) ? "Ka" : "Don")} strength={strength} timeToHit={timeToHit}ms");
+	
+	        Task.Delay((int)VIBRATION_DURATION).ContinueWith(_ => {
+	            if (!this.bCurrentlyDrumRoll[player]) {
+	                gamepadVibration?.StopVibration();
+	            }
+	        });
+	    }
+	}
+	#endregion
+
 	protected override void t進行描画_チップ_Taiko(CConfigIni configIni, ref CTja dTX, ref CChip pChip, int nPlayer) {
-		int nLane = (int)PlayerLane.FlashType.Red;
-		EGameType _gt = OpenTaiko.ConfigIni.nGameType[OpenTaiko.GetActualPlayer(nPlayer)];
-		CTja tja = OpenTaiko.GetTJA(nPlayer)!;
+	int nLane = (int)PlayerLane.FlashType.Red;
+	EGameType _gt = OpenTaiko.ConfigIni.nGameType[OpenTaiko.GetActualPlayer(nPlayer)];
+	CTja tja = OpenTaiko.GetTJA(nPlayer)!;
+	
+	// Add vibration feedback
+	CheckNoteVibration(pChip, (long)tja.GameTimeToTjaTime(SoundManager.PlayTimer.NowTimeMs), nPlayer);
 
 		#region[ 作り直したもの ]
 
@@ -1983,10 +2128,15 @@ internal class CStage演奏ドラム画面 : CStage演奏画面共通 {
 	/// 全体にわたる制御をする。
 	/// </summary>
 	public void t全体制御メソッド() {
-		int t = (int)SoundManager.PlayTimer.NowTimeMs;
-		//CDTXMania.act文字コンソール.tPrint( 0, 16, C文字コンソール.Eフォント種別.白, t.ToString() );
-
-		this.actBalloon.tDrawKusudama();
+	    int t = (int)SoundManager.PlayTimer.NowTimeMs;
+	
+	    this.actBalloon.tDrawKusudama();
+	    
+	    // Store previous roll states and reset current
+	    for (int i = 0; i < OpenTaiko.ConfigIni.nPlayerCount; i++) {
+	        wasRollActive[i] = isRollActive[i];
+	        isRollActive[i] = false;
+	    }
 
 		for (int i = 0; i < OpenTaiko.ConfigIni.nPlayerCount; i++) {
 			CTja tja = OpenTaiko.GetTJA(i)!;
@@ -1996,8 +2146,14 @@ internal class CStage演奏ドラム画面 : CStage演奏画面共通 {
 				//int n = this.chip現在処理中の連打チップ[i].nチャンネル番号;
 				if ((NotesManager.IsGenericBalloon(chkChip) || NotesManager.IsKusudama(chkChip)) && (this.bCurrentlyDrumRoll[i] == true)) {
 					//if (this.chip現在処理中の連打チップ.n発声時刻ms <= (int)CSound管理.rc演奏用タイマ.n現在時刻ms && this.chip現在処理中の連打チップ.nノーツ終了時刻ms >= (int)CSound管理.rc演奏用タイマ.n現在時刻ms)
-					if (chkChip.n発声時刻ms <= (int)nowTime
-						&& chkChip.nNoteEndTimems + 500 >= (int)nowTime) {
+					if (chkChip.n発声時刻ms <= (int)nowTime && chkChip.nNoteEndTimems >= (int)nowTime) {
+					    isRollActive[i] = true;
+					    float strength = NotesManager.IsGenericBalloon(chkChip) ? VIBRATION_STRENGTH_BALLOON : VIBRATION_STRENGTH_ROLL;
+					    
+					    if (gamepadVibration != null && gamepadVibration.IsConnected()) {
+					        gamepadVibration.SetVibration(strength, strength);
+					        //Debug.WriteLine($"Roll vibration: Active Player={i} Strength={strength}");
+					    }
 						var balloon = NotesManager.IsKusudama(chkChip) ? nCurrentKusudamaCount : chkChip.nBalloon;
 						if (!NotesManager.IsFuzeRoll(chkChip)) chkChip.bShow = false;
 						this.actBalloon.On進行描画(
@@ -2029,9 +2185,18 @@ internal class CStage演奏ドラム画面 : CStage演奏画面共通 {
 			bool _isBigDonTaiko = NotesManager.IsBigDonTaiko(chipNoHit, _gt);
 			bool _isSwapNote = NotesManager.IsSwapNote(chipNoHit, _gt);
 
+			// Track current rolls for each player
+			var currentRoll = this.chip現在処理中の連打チップ[i];
+			if (currentRoll != null && NotesManager.IsGenericRoll(currentRoll) && !NotesManager.IsRollEnd(currentRoll)) {
+			    long nowTime = (long)tja.GameTimeToTjaTime(SoundManager.PlayTimer.NowTimeMs);
+			    if (currentRoll.n発声時刻ms <= nowTime && currentRoll.nNoteEndTimems >= nowTime) {
+			        isRollActive[i] = true;
+			    }
+			}
+
 			if (chipNoHit != null && (_isBigDonTaiko || _isBigKaTaiko)) {
-				CConfigIni.CTimingZones tz = this.GetTimingZones(i);
-				float timeC = chipNoHit.n発声時刻ms - (float)tja.GameTimeToTjaTime(SoundManager.PlayTimer.NowTimeMs);
+			    CConfigIni.CTimingZones tz = this.GetTimingZones(i);
+			    float timeC = chipNoHit.n発声時刻ms - (float)tja.GameTimeToTjaTime(SoundManager.PlayTimer.NowTimeMs);
 				int nWaitTime = OpenTaiko.ConfigIni.nBigNoteWaitTimems;
 				if (chipNoHit.eNoteState == ENoteState.Wait && timeC <= tz.nBadZone
 															&& chipNoHit.nProcessTime + nWaitTime <= (int)tja.GameTimeToTjaTime(SoundManager.PlayTimer.NowTimeMs)) {
@@ -2053,8 +2218,36 @@ internal class CStage演奏ドラム画面 : CStage演奏画面共通 {
 
 		//string strNull = "Found";
 
+		// Manage vibration state for active rolls
+		bool anyRollActive = false;
+		
+		// Check if any rolls are active
+		for (int i = 0; i < OpenTaiko.ConfigIni.nPlayerCount; i++) {
+		    if (isRollActive[i]) {
+		        anyRollActive = true;
+		        break;
+		    }
+		}
+		
+		// Update roll vibration state only if enough time has passed since last roll vibration
+		var timeSinceLastVibration = DateTime.Now - lastVibrationTime;
+		bool canUpdateRollVibration = timeSinceLastVibration.TotalMilliseconds >= MIN_ROLL_VIBRATION_INTERVAL;
+		
+		if (gamepadVibration != null && gamepadVibration.IsConnected()) {
+		    // Handle roll state changes
+		    if (anyRollActive && canUpdateRollVibration) {
+		        float strength = VIBRATION_STRENGTH_ROLL;
+		        gamepadVibration.SetVibration(strength, strength);
+		        lastVibrationTime = DateTime.Now;
+		    }
+		    else if (!anyRollActive && wasRollActive.Any(active => active)) { // Check if any player was in roll state, using clearer variable name
+		        gamepadVibration.StopVibration();
+		    }
+		}
+		
+		
 		if (OpenTaiko.InputManager.Keyboard.KeyPressed((int)SlimDXKeys.Key.F1)) {
-			if (!this.actPauseMenu.bIsActivePopupMenu && this.bPAUSE == false) {
+		if (!this.actPauseMenu.bIsActivePopupMenu && this.bPAUSE == false) {
 				OpenTaiko.Skin.soundChangeSFX.tPlay();
 
 				SoundManager.PlayTimer.Pause();
