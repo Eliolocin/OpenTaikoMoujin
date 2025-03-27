@@ -14,8 +14,8 @@ internal class CStage演奏ドラム画面 : CStage演奏画面共通 {
 #region HapFB Constants
 	private CGamepadVibration gamepadVibration;
 	// Vibration timing constants
-	private const float PERFECT_WARNING_TIME = 50.0f;      // ms before perfect timing to start vibration
-	private const float VIBRATION_DURATION = 200.0f;       // ms duration for single note vibrations
+	private const float PERFECT_WARNING_TIME = 200.0f;      // ms before perfect timing to start vibration
+	private const float VIBRATION_DURATION = 20.0f;       // ms duration for single note vibrations
 	private const float ROLL_CHECK_INTERVAL = 200.0f;      // ms between roll vibration checks
 	private const float MIN_ROLL_VIBRATION_INTERVAL = 100.0f;   // Minimum time between roll vibration changes
 	private const float MIN_NOTE_VIBRATION_INTERVAL = 10.0f;    // Minimum time between note vibration changes
@@ -33,6 +33,8 @@ internal class CStage演奏ドラム画面 : CStage演奏画面共通 {
 	private bool[] wasRollActive;                          // Previous roll state
 	private DateTime lastVibrationTime;                    // Track last vibration change
 	private Dictionary<int, bool> hasVibrated = new Dictionary<int, bool>();
+	private long lastNoteHitTime = -1;     // Track the game time (ms) of the last note that triggered vibration
+	private const int MIN_GAP_MS = 100;     // Minimum gap (ms) between notes (for notes that are close together)
 #endregion
 
 	public CStage演奏ドラム画面() {
@@ -207,6 +209,13 @@ internal class CStage演奏ドラム画面 : CStage演奏画面共通 {
 
 	public override void Activate() {
 		LoudnessMetadataScanner.StopBackgroundScanning(joinImmediately: false);
+
+		if (gamepadVibration == null || !gamepadVibration.IsConnected())
+    	{
+        	gamepadVibration = new CGamepadVibration("COM3");
+    	}
+
+		hasVibrated.Clear();
 
 		this.bフィルイン中 = false;
 		this.n待機中の大音符の座標 = 0;
@@ -1445,35 +1454,62 @@ internal class CStage演奏ドラム画面 : CStage演奏画面共通 {
 	
 	    // Regular note handling
 	    if (!NotesManager.IsHittableNote(chip)) return;
-	    if (hasVibrated.ContainsKey(chip.n整数値)) return;
 	
 	    float timeToHit = chip.n発声時刻ms - currentTime;
-	    if (timeToHit <= PERFECT_WARNING_TIME && timeToHit > 0) {
-	        float preHitStrength = VIBRATION_STRENGTH_DON;
-	        var gameType = OpenTaiko.ConfigIni.nGameType[OpenTaiko.GetActualPlayer(player)];
-	        
-	        if (NotesManager.IsBigDonTaiko(chip, gameType)) {
-	            preHitStrength = VIBRATION_STRENGTH_DON * BIG_NOTE_MULTIPLIER;
-				gamepadVibration.SetVibration(0, preHitStrength);
-	        }
-	        else if (NotesManager.IsKaNote(chip)) {
-	            preHitStrength = VIBRATION_STRENGTH_KA;
-	            if (NotesManager.IsBigKaTaiko(chip, gameType)) {
-	                preHitStrength *= BIG_NOTE_MULTIPLIER;
-	            }
-				gamepadVibration.SetVibration(preHitStrength, 0);
-	        } // Normal Don note
-			else gamepadVibration.SetVibration(0, preHitStrength);
-	
-	        
-	        hasVibrated[chip.n整数値] = true;
-	        //Debug.WriteLine($"Note vibration: {(NotesManager.IsKaNote(chip) ? "Ka" : "Don")} strength={strength} timeToHit={timeToHit}ms");
-	
-	        Task.Delay((int)VIBRATION_DURATION).ContinueWith(_ => {
-	            if (!this.bCurrentlyDrumRoll[player]) {
-	                gamepadVibration?.StopVibration();
-	            }
-	        });
+
+		long gap = chip.n発声時刻ms - lastNoteHitTime;
+    	float effectiveWarningTime = PERFECT_WARNING_TIME;
+
+	    if (lastNoteHitTime >= 0 && gap < MIN_GAP_MS)
+    	{
+        	// If notes are very close, reduce the pre-hit window by half.
+        	effectiveWarningTime = PERFECT_WARNING_TIME / 2.0f;
+    	}
+
+    	// Check if we should vibrate now
+    	if (timeToHit <= effectiveWarningTime && timeToHit > 0)
+    	{
+        	// Force stop any current vibration before starting a new one
+        	// (to ensure distinct pulses).
+        	gamepadVibration.StopVibration();
+
+        	float preHitStrength = VIBRATION_STRENGTH_DON;
+        	var gameType = OpenTaiko.ConfigIni.nGameType[OpenTaiko.GetActualPlayer(player)];
+
+        	// Decide if it's a Don or Ka, big or small
+        	if (NotesManager.IsBigDonTaiko(chip, gameType))
+        	{
+            	preHitStrength = VIBRATION_STRENGTH_DON * BIG_NOTE_MULTIPLIER;
+            	// Vibrate the right motor
+            	gamepadVibration.SetVibration(0, preHitStrength);
+        	}
+        	else if (NotesManager.IsKaNote(chip))
+        	{
+            	preHitStrength = VIBRATION_STRENGTH_KA;
+            	if (NotesManager.IsBigKaTaiko(chip, gameType))
+            	{
+                	preHitStrength *= BIG_NOTE_MULTIPLIER;
+            	}
+            	// Vibrate the left motor
+            	gamepadVibration.SetVibration(preHitStrength, 0);
+        	}
+        	else
+        	{
+            	// Normal Don
+            	gamepadVibration.SetVibration(0, preHitStrength);
+        	}
+
+        	// Mark this note's time for reference when the next note arrives
+        	lastNoteHitTime = chip.n発声時刻ms;
+
+        	// Stop after the set duration
+        	Task.Delay((int)VIBRATION_DURATION).ContinueWith(_ =>
+        	{
+            	if (!this.bCurrentlyDrumRoll[player])
+            	{
+                	gamepadVibration.StopVibration();
+            	}
+        	});
 	    }
 	}
 	#endregion

@@ -1,22 +1,29 @@
-using SharpDX.XInput;
+using System;
+using System.IO.Ports;
+using System.Threading.Tasks;
 
 namespace FDK;
 
 public class CGamepadVibration : IDisposable {
-    private Controller controller;
-    private bool isConnected;
-    private Vibration vibrationState;
+    private SerialPort serialPort;
 
-    public CGamepadVibration(UserIndex userIndex = UserIndex.One) {
-        controller = new Controller(userIndex);
-        isConnected = controller.IsConnected;
-        vibrationState = new Vibration();
+    public CGamepadVibration(string portName = "COM3") {
+        serialPort = new SerialPort(portName, 9600);
+        serialPort.Open();
     }
 
     public bool IsConnected() {
-        isConnected = controller.IsConnected;  // Update connection state
-        return isConnected;
+        return serialPort != null && serialPort.IsOpen;
     }
+
+    public void SendCommand(string command)
+        {
+            if (IsConnected())
+            {
+                // Append a newline so that the Arduino can use ReadLine()
+                serialPort.WriteLine(command);
+            }
+        }
 
     /// <summary>
     /// Sets vibration strength for both motors
@@ -26,10 +33,10 @@ public class CGamepadVibration : IDisposable {
     public void SetVibration(float leftMotor, float rightMotor) {
         if (!IsConnected()) return;
 
-        vibrationState.LeftMotorSpeed = (ushort)(Math.Clamp(leftMotor, 0f, 2f) * 65535f);
-        vibrationState.RightMotorSpeed = (ushort)(Math.Clamp(rightMotor, 0f, 2f) * 65535f);
-        
-        controller.SetVibration(vibrationState);
+        int leftPWM = (int)(Math.Clamp(leftMotor, 0f, 1f) * 255);
+        int rightPWM = (int)(Math.Clamp(rightMotor, 0f, 1f) * 255);
+        string command = $"SET,{leftPWM},{rightPWM}";
+        SendCommand(command);
     }
 
     /// <summary>
@@ -48,12 +55,13 @@ public class CGamepadVibration : IDisposable {
     public void StopVibration() {
         if (!IsConnected()) return;
         
-        vibrationState.LeftMotorSpeed = 0;
-        vibrationState.RightMotorSpeed = 0;
-        controller.SetVibration(vibrationState);
+         SendCommand("STOP");
     }
 
     public void Dispose() {
         StopVibration();
+        if (serialPort != null && serialPort.IsOpen)
+                serialPort.Close();
+
     }
 }
