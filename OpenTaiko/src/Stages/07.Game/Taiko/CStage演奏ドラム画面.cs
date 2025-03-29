@@ -14,8 +14,8 @@ internal class CStage演奏ドラム画面 : CStage演奏画面共通 {
 #region HapFB Constants
 	private CGamepadVibration gamepadVibration;
 	// Vibration timing constants
-	private const float PERFECT_WARNING_TIME = 200.0f;      // ms before perfect timing to start vibration
-	private const float VIBRATION_DURATION = 20.0f;       // ms duration for single note vibrations
+	private const float PERFECT_WARNING_TIME = 339.0f;      // ms before perfect timing to start vibration
+	private const float VIBRATION_DURATION = 100.0f;       // ms duration for single note vibrations
 	private const float ROLL_CHECK_INTERVAL = 200.0f;      // ms between roll vibration checks
 	private const float MIN_ROLL_VIBRATION_INTERVAL = 100.0f;   // Minimum time between roll vibration changes
 	private const float MIN_NOTE_VIBRATION_INTERVAL = 10.0f;    // Minimum time between note vibration changes
@@ -212,7 +212,7 @@ internal class CStage演奏ドラム画面 : CStage演奏画面共通 {
 
 		if (gamepadVibration == null || !gamepadVibration.IsConnected())
     	{
-        	gamepadVibration = new CGamepadVibration("COM3");
+        	gamepadVibration = new CGamepadVibration("COM4");
     	}
 
 		hasVibrated.Clear();

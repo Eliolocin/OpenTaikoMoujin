@@ -1,5 +1,5 @@
 const int leftMotorPin = 6; //change this
-const int rightMotorPin = 10; //change this
+const int rightMotorPin = 9; //change this
 
 bool rollActive = false;
 unsigned long tapEndTime = 0;
