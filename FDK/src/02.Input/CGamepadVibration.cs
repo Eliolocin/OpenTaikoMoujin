@@ -7,7 +7,7 @@ namespace FDK;
 public class CGamepadVibration : IDisposable {
     private SerialPort serialPort;
 
-    public CGamepadVibration(string portName = "COM3") {
+    public CGamepadVibration(string portName = "COM4") {
         serialPort = new SerialPort(portName, 9600);
         serialPort.Open();
     }
